@@ -1,0 +1,233 @@
+services:
+
+  # ==========================================
+  # PostgreSQL + pgvector
+  # ==========================================
+  pgvector:
+    image: pgvector/pgvector:pg16
+    container_name: minimal_pgvector
+    restart: unless-stopped
+
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB}
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+
+    ports:
+      - "5432:5432"
+
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+
+    mem_limit: 512m
+
+    command:
+      - postgres
+      - -c
+      - shared_buffers=128MB
+      - -c
+      - max_connections=30
+
+    healthcheck:
+      test:
+        [
+          "CMD-SHELL",
+          "pg_isready -U ${POSTGRES_USER} -d ${POSTGRES_DB}"
+        ]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+
+  # ==========================================
+  # Elasticsearch
+  # ==========================================
+  elasticsearch:
+    image: docker.elastic.co/elasticsearch/elasticsearch:${ELASTICSEARCH_VERSION}
+    container_name: minimal_es
+    restart: unless-stopped
+
+    environment:
+      discovery.type: single-node
+      xpack.security.enabled: "false"
+      ES_JAVA_OPTS: "-Xms256m -Xmx256m"
+
+    ports:
+      - "9200:9200"
+
+    volumes:
+      - esdata:/usr/share/elasticsearch/data
+
+    mem_limit: 768m
+
+    healthcheck:
+      test:
+        [
+          "CMD-SHELL",
+          "curl -fs http://localhost:9200/_cluster/health || exit 1"
+        ]
+      interval: 20s
+      timeout: 10s
+      retries: 10
+
+
+  # ==========================================
+  # Kafka
+  # KRaft 单节点
+  # ==========================================
+  kafka:
+    image: apache/kafka:${KAFKA_VERSION}
+    container_name: minimal_kafka
+    restart: unless-stopped
+
+    environment:
+
+      # ----------------------------------------
+      # KRaft
+      # ----------------------------------------
+      KAFKA_NODE_ID: "1"
+
+      KAFKA_PROCESS_ROLES: "broker,controller"
+
+      KAFKA_CONTROLLER_QUORUM_VOTERS: "1@kafka:9093"
+
+
+      # ----------------------------------------
+      # Listener
+      # ----------------------------------------
+      KAFKA_LISTENERS: >-
+        INTERNAL://0.0.0.0:29092,
+        EXTERNAL://0.0.0.0:9092,
+        CONTROLLER://0.0.0.0:9093
+
+      KAFKA_ADVERTISED_LISTENERS: >-
+        INTERNAL://kafka:29092,
+        EXTERNAL://${SERVER_IP}:9092
+
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: >-
+        INTERNAL:PLAINTEXT,
+        EXTERNAL:PLAINTEXT,
+        CONTROLLER:PLAINTEXT
+
+      KAFKA_CONTROLLER_LISTENER_NAMES: "CONTROLLER"
+
+      KAFKA_INTER_BROKER_LISTENER_NAME: "INTERNAL"
+
+
+      # ----------------------------------------
+      # Single Node
+      # ----------------------------------------
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: "1"
+
+      KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: "1"
+
+      KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: "1"
+
+      KAFKA_GROUP_INITIAL_REBALANCE_DELAY_MS: "0"
+
+
+      # ----------------------------------------
+      # JVM
+      # ----------------------------------------
+      KAFKA_HEAP_OPTS: "-Xms256m -Xmx256m"
+
+    ports:
+      - "9092:9092"
+
+    volumes:
+      - kafkadata:/var/lib/kafka/data
+
+    mem_limit: 768m
+
+
+  # ==========================================
+  # RocketMQ NameServer
+  # ==========================================
+  rmqnamesrv:
+    image: apache/rocketmq:${ROCKETMQ_VERSION}
+    container_name: minimal_rmqnamesrv
+    restart: unless-stopped
+
+    command:
+      - sh
+      - mqnamesrv
+
+    ports:
+      - "9876:9876"
+
+    environment:
+      JAVA_OPT_EXT: "-Xms128m -Xmx128m -Xmn64m"
+
+    mem_limit: 300m
+
+
+  # ==========================================
+  # RocketMQ Broker
+  # ==========================================
+  rmqbroker:
+    image: apache/rocketmq:${ROCKETMQ_VERSION}
+    container_name: minimal_rmqbroker
+    restart: unless-stopped
+
+    depends_on:
+      rmqnamesrv:
+        condition: service_started
+
+    entrypoint:
+      - /bin/bash
+      - /home/rocketmq/wait-for-ns.sh
+      - rmqnamesrv
+      - "9876"
+      - sh
+      - mqbroker
+      - -c
+      - /home/rocketmq/conf/broker.conf
+
+    environment:
+      JAVA_OPT_EXT: "-Xms256m -Xmx256m -Xmn128m"
+      NAMESRV_ADDR: "rmqnamesrv:9876"
+
+    ports:
+      - "10909:10909"
+      - "10911:10911"
+      - "10912:10912"
+
+    volumes:
+
+      # RocketMQ 数据
+      - rmqdata:/home/rocketmq/store
+
+      # Broker 配置
+      - ../rocketmq/broker.conf:/home/rocketmq/conf/broker.conf:ro
+
+      # NameServer 等待脚本
+      - ../scripts/wait-for-ns.sh:/home/rocketmq/wait-for-ns.sh:ro
+
+    mem_limit: 768m
+
+
+# ==========================================
+# Volumes
+# ==========================================
+volumes:
+
+  pgdata:
+    name: minimal_pgdata
+
+  esdata:
+    name: minimal_esdata
+
+  kafkadata:
+    name: minimal_kafkadata
+
+  rmqdata:
+    name: minimal_rmqdata
+
+
+# ==========================================
+# Network
+# ==========================================
+networks:
+
+  default:
+    name: mq_default
