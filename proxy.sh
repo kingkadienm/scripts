@@ -1,3 +1,5 @@
+cat << 'EOF' >> ~/.bash_profile
+
 # ------------------ Clash/Mihomo 代理一键开关 ------------------
 function proxy_on() {
     export http_proxy="http://127.0.0.1:7890"
@@ -35,3 +37,9 @@ function proxy_status() {
 alias proxy_on="proxy_on"
 alias proxy_off="proxy_off"
 alias proxy_status="proxy_status"
+EOF
+
+# 使配置立即在当前终端生效
+source ~/.bash_profile
+
+echo "🎉 代理配置已成功写入 ~/.bash_profile 并已重载生效！"
